@@ -1,0 +1,9 @@
+{
+  "Stored Procedure": "usp_Merge_ITF_{SYSTEM}_{CLIENT}_{PROCESS}",
+  "Job (Ingress)": "Ingress_{SYSTEM}_{CLIENT}_{PROCESS}",
+  "ADF Pipeline": "PL_{SYSTEM}_{CLIENT}_{PROCESS}",
+  "Function": "fn_{SYSTEM}_{CLIENT}_{PROCESS}",
+  "Table": "tbl_{SYSTEM}_{CLIENT}_{PROCESS}",
+  "View": "vw_{SYSTEM}_{CLIENT}_{PROCESS}",
+  "Generic (with ENV/DATE/SEQ)": "obj_{SYSTEM}_{CLIENT}_{PROCESS}_{ENV}_{DATE}_{SEQ}"
+}
