@@ -157,19 +157,21 @@ def get_sequence(key: str) -> int:
     return row[0] if row else 0
 
 def sanitize_token_value(v: str) -> str:
-    v = (v or "").strip().upper()
-    v = re.sub(r"\s+", "_", v)          # spaces → underscore
-    v = re.sub(r"[^A-Z0-9_]", "_", v)   # any special char → underscore ✅
-    v = re.sub(r"_+", "_", v)           # collapse multiple underscores
-    v = v.strip("_")                    # trim leading/trailing underscores
-    return v[:MAX_LENGTH]
+    v = (v or "").strip()
+    # Replace any non-alphanumeric with space
+    v = re.sub(r"[^A-Za-z0-9]+", " ", v)
+    # Split into words, capitalize each → PascalCase
+    parts = v.split()
+    pascal = "".join(word.capitalize() for word in parts)
+    return pascal[:MAX_LENGTH]
+
 
 
 def validate_name(name: str) -> tuple[bool, str]:
     if len(name) > MAX_LENGTH:
         return False, f"Name exceeds max length {MAX_LENGTH}"
-    if not ALLOWED_PATTERN.match(name):
-        return False, "Only A–Z, 0–9, and _ are allowed"
+    if not re.match(r"^[A-Za-z0-9_]+$", name):
+        return False, "Only letters, numbers, and underscores are allowed"
     return True, ""
 
 def format_with_tokens(template: str, token_values: dict, seq_scope: str = "GLOBAL") -> tuple[str, dict]:
