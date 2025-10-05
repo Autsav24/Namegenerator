@@ -1,66 +1,92 @@
 import streamlit as st
+import pandas as pd
+import json
+from datetime import datetime
 
-# ========== CONFIG ==========
-st.set_page_config(page_title="Naming Convention Generator", page_icon="🧩", layout="centered")
+st.set_page_config(page_title="Advanced Naming Generator", page_icon="🧩", layout="wide")
 
-st.title("🧩 Naming Convention Generator")
-st.markdown("Generate consistent technical names based on your organization’s standards.")
+# Load templates
+if "templates" not in st.session_state:
+    st.session_state.templates = {
+        "Stored Procedure": "usp_Merge_ITF_{SYSTEM}_{CLIENT}_{PROCESS}",
+        "Job": "Ingress_{SYSTEM}_{CLIENT}_{PROCESS}",
+        "Pipeline": "PL_{SYSTEM}_{CLIENT}_{PROCESS}",
+        "Function": "fn_{SYSTEM}_{CLIENT}_{PROCESS}",
+        "Table": "tbl_{SYSTEM}_{CLIENT}_{PROCESS}",
+        "View": "vw_{SYSTEM}_{CLIENT}_{PROCESS}"
+    }
 
-# ========== USER INPUT ==========
-naming_type = st.selectbox(
-    "Select Naming Type",
-    [
-        "Stored Procedure (usp_Merge_ITF_{SYSTEM}_{CLIENT}_{PROCESS})",
-        "Job (Ingress_{SYSTEM}_{CLIENT}_{PROCESS})",
-        "ADF Pipeline (PL_{SYSTEM}_{CLIENT}_{PROCESS})",
-        "Function (fn_{SYSTEM}_{CLIENT}_{PROCESS})",
-        "Table (tbl_{SYSTEM}_{CLIENT}_{PROCESS})",
-        "View (vw_{SYSTEM}_{CLIENT}_{PROCESS})"
-    ]
-)
+# History log
+if "history" not in st.session_state:
+    st.session_state.history = []
 
-system = st.text_input("Enter System Name (e.g. CRM, HRMS, ERP)")
-client = st.text_input("Enter Client Name (e.g. ABC, XYZ)")
-process = st.text_input("Enter Process Name (e.g. Orders, Invoice, Extract)")
+# Tabs
+tab1, tab2, tab3, tab4 = st.tabs(["🔑 Generate", "📜 History", "📂 Bulk Upload", "⚙️ Admin Panel"])
 
-# ========== GENERATE NAME ==========
-if st.button("Generate Name"):
-    system = system.strip().upper()
-    client = client.strip().upper()
-    process = process.strip().upper()
+# --- Generate Tab ---
+with tab1:
+    st.header("Generate a Name")
+    naming_type = st.selectbox("Select Naming Type", list(st.session_state.templates.keys()))
+    system = st.text_input("System Name")
+    client = st.text_input("Client Name")
+    process = st.text_input("Process Name")
 
-    if not system or not client or not process:
-        st.warning("⚠️ Please fill in all fields.")
-    else:
-        if naming_type.startswith("Stored Procedure"):
-            name = f"usp_Merge_ITF_{system}_{client}_{process}"
-        elif naming_type.startswith("Job"):
-            name = f"Ingress_{system}_{client}_{process}"
-        elif naming_type.startswith("ADF Pipeline"):
-            name = f"PL_{system}_{client}_{process}"
-        elif naming_type.startswith("Function"):
-            name = f"fn_{system}_{client}_{process}"
-        elif naming_type.startswith("Table"):
-            name = f"tbl_{system}_{client}_{process}"
-        elif naming_type.startswith("View"):
-            name = f"vw_{system}_{client}_{process}"
-        else:
-            name = "Invalid type"
+    if st.button("Generate"):
+        template = st.session_state.templates[naming_type]
+        name = template.format(
+            SYSTEM=system.upper().strip(),
+            CLIENT=client.upper().strip(),
+            PROCESS=process.upper().strip()
+        )
 
         st.success("✅ Generated Name:")
         st.code(name, language="text")
 
-        # Copy to clipboard button
-        st.markdown(
-            f"""
-            <button onclick="navigator.clipboard.writeText('{name}')"
-            style="background-color:#4CAF50;color:white;padding:8px 16px;border:none;border-radius:6px;cursor:pointer;margin-top:10px;">
-            📋 Copy to Clipboard
-            </button>
-            """ ,
-            unsafe_allow_html=True
-        )
+        # Add to history
+        st.session_state.history.append({
+            "Name": name,
+            "Type": naming_type,
+            "System": system,
+            "Client": client,
+            "Process": process,
+            "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        })
 
-# ========== FOOTER ==========
-st.markdown("---")
-st.caption("Developed by CodeToCashChronicles 🧠")
+# --- History Tab ---
+with tab2:
+    st.header("Generated History")
+    df = pd.DataFrame(st.session_state.history)
+    if not df.empty:
+        st.dataframe(df, use_container_width=True)
+        st.download_button("📥 Export to CSV", df.to_csv(index=False), "history.csv")
+    else:
+        st.info("No history yet.")
+
+# --- Bulk Upload Tab ---
+with tab3:
+    st.header("Bulk Generate Names")
+    uploaded = st.file_uploader("Upload CSV with columns: system, client, process")
+    if uploaded:
+        bulk_df = pd.read_csv(uploaded)
+        bulk_df["GeneratedName"] = bulk_df.apply(
+            lambda row: st.session_state.templates["Stored Procedure"].format(
+                SYSTEM=row["system"].upper(),
+                CLIENT=row["client"].upper(),
+                PROCESS=row["process"].upper()
+            ), axis=1
+        )
+        st.dataframe(bulk_df)
+        st.download_button("📥 Export Bulk CSV", bulk_df.to_csv(index=False), "bulk_generated.csv")
+
+# --- Admin Panel ---
+with tab4:
+    st.header("Manage Templates")
+    st.write("Add or edit naming templates here.")
+
+    new_type = st.text_input("New Template Type")
+    new_template = st.text_input("New Template Format (use {SYSTEM}, {CLIENT}, {PROCESS})")
+
+    if st.button("Add Template"):
+        if new_type and new_template:
+            st.session_state.templates[new_type] = new_template
+            st.success(f"✅ Added new template: {new_type}")
