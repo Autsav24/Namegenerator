@@ -46,35 +46,35 @@ USERS = {
 def login():
     with st.sidebar:
         st.subheader("🔐 Login")
+
         if "auth" not in st.session_state:
             st.session_state.auth = {"logged_in": False, "username": None, "role": None}
 
         if not st.session_state.auth["logged_in"]:
+            # Two options: Login as user OR admin
+            if st.button("👤 Login as User"):
+                st.session_state.auth = {"logged_in": True, "username": "user", "role": "user"}
+                st.success("Welcome, User!")
+                rerun()
+
+            st.markdown("---")
+            st.write("**Admin Login**")
             u = st.text_input("Username", key="login_user")
-
-            # Only ask password if admin
-            if u == "admin":
-                p = st.text_input("Password", type="password", key="login_pass")
-            else:
-                p = None
-
-            if st.button("Sign in"):
-                if u in USERS:
-                    required_pw = USERS[u]["password"]
-                    if required_pw is None or required_pw == p:
-                        st.session_state.auth = {"logged_in": True, "username": u, "role": USERS[u]["role"]}
-                        st.success(f"Welcome, {u}!")
-                        rerun()
-                    else:
-                        st.error("Invalid password for admin")
+            p = st.text_input("Password", type="password", key="login_pass")
+            if st.button("🔑 Login as Admin"):
+                if u in USERS and USERS[u]["password"] == p:
+                    st.session_state.auth = {"logged_in": True, "username": u, "role": USERS[u]["role"]}
+                    st.success(f"Welcome, {u}!")
+                    rerun()
                 else:
-                    st.error("Unknown user")
+                    st.error("Invalid admin credentials")
         else:
             st.write(f"**User:** {st.session_state.auth['username']}")
             st.write(f"**Role:** `{st.session_state.auth['role']}`")
             if st.button("Sign out"):
                 st.session_state.auth = {"logged_in": False, "username": None, "role": None}
                 rerun()
+
 
 login()
 if not st.session_state.auth["logged_in"]:
