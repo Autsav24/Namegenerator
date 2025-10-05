@@ -1,5 +1,5 @@
 import streamlit as st
-from streamlit import rerun   # ✅ new import
+from streamlit import rerun   # ✅ for rerun
 import pandas as pd
 import json
 import re
@@ -43,7 +43,6 @@ DEFAULT_TEMPLATES = {
     "Generic (with ENV/DATE/SEQ)": "obj_{SYSTEM}_{CLIENT}_{PROCESS}_{ENV}_{DATE}_{SEQ}"
 }
 
-# Tokens that are auto-handled (no user input required)
 AUTO_TOKENS = {"DATE", "SEQ"}
 SPECIAL_TOKENS = {"ENV"}
 ENV_OPTIONS = ["DEV", "TEST", "UAT", "STAGE", "PROD"]
@@ -170,9 +169,56 @@ def validate_name(name: str) -> tuple[bool, str]:
         return False, "Only A–Z, 0–9, and _ are allowed"
     return True, ""
 
-# =================================
-# History Fetch + Export
-# =================================
+def format_with_tokens(template: str, token_values: dict, seq_scope: str = "GLOBAL") -> tuple[str, dict]:
+    used = {}
+    name = template
+    today = datetime.now().strftime("%Y%m%d")
+    if "{DATE}" in name:
+        used["DATE"] = today
+        name = name.replace("{DATE}", today)
+    if "{SEQ}" in name:
+        key = f"{seq_scope}:{template}"
+        next_seq = bump_sequence(key)
+        used["SEQ"] = str(next_seq)
+        name = name.replace("{SEQ}", str(next_seq))
+    if "{ENV}" in name:
+        val = token_values.get("ENV", "DEV")
+        val = sanitize_token_value(val)
+        used["ENV"] = val
+        name = name.replace("{ENV}", val)
+    tokens = set(re.findall(r"\{([A-Z0-9_]+)\}", template))
+    for t in tokens:
+        if t in {"DATE", "SEQ", "ENV"}: continue
+        val = sanitize_token_value(token_values.get(t, ""))
+        used[t] = val
+        name = name.replace("{%s}" % t, val)
+    name = re.sub(r"_+", "_", name).strip("_")
+    return name, used
+
+def insert_history(name: str, ntype: str, used: dict, username: str):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute(
+        """
+        INSERT INTO history(name, type, system, client, process, action, env, extra, user, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            name,
+            ntype,
+            used.get("SYSTEM"),
+            used.get("CLIENT"),
+            used.get("PROCESS"),
+            used.get("ACTION"),
+            used.get("ENV"),
+            json.dumps({k:v for k,v in used.items() if k not in {"SYSTEM","CLIENT","PROCESS","ACTION","ENV"}}),
+            username,
+            datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        )
+    )
+    conn.commit()
+    conn.close()
+
 def fetch_history(filters: dict | None = None) -> pd.DataFrame:
     conn = sqlite3.connect(DB_FILE)
     q = "SELECT id, name, type, system, client, process, action, env, user, created_at FROM history WHERE 1=1"
@@ -195,13 +241,13 @@ def export_excel(df: pd.DataFrame) -> BytesIO:
     return output
 
 # =================================
-# Ensure persistence
+# Init
 # =================================
 ensure_db()
 TEMPLATES = load_templates()
 
 # =================================
-# Sidebar: Template selection + Quick Actions
+# Sidebar
 # =================================
 with st.sidebar:
     st.header("⚙️ Controls")
@@ -222,5 +268,110 @@ with st.sidebar:
         rerun()   # ✅ fixed
 
 # =================================
-# Tabs (rest of app continues as before)
+# Tabs
 # =================================
+tab_gen, tab_bulk, tab_hist, tab_analytics, tab_admin = st.tabs([
+    "🔑 Generate",
+    "📦 Bulk",
+    "📜 History",
+    "📊 Analytics",
+    "🛠️ Admin"
+])
+
+# =================================
+# Generate Tab
+# =================================
+with tab_gen:
+    st.subheader("Generate a Name")
+    tokens_in_template = set(re.findall(r"\{([A-Z0-9_]+)\}", template_str))
+
+    cols = st.columns(3)
+    token_values = {}
+    if "ENV" in tokens_in_template:
+        token_values["ENV"] = cols[0].selectbox("ENV", ENV_OPTIONS, index=0)
+    if "ACTION" in tokens_in_template:
+        token_values["ACTION"] = cols[1].text_input("ACTION")
+    token_values["SYSTEM"] = cols[0].text_input("SYSTEM")
+    token_values["CLIENT"] = cols[1].text_input("CLIENT")
+    token_values["PROCESS"] = cols[2].text_input("PROCESS")
+
+    extra_tokens = [t for t in tokens_in_template if t not in {"SYSTEM","CLIENT","PROCESS","ACTION","ENV","DATE","SEQ"}]
+    for t in extra_tokens:
+        token_values[t] = st.text_input(t)
+
+    if st.button("Generate Name", type="primary"):
+        name, used = format_with_tokens(template_str, token_values)
+        ok, msg = validate_name(name)
+        duplicate_df = fetch_history({"type": selected_type})
+        duplicate_exists = not duplicate_df[duplicate_df["name"] == name].empty if not duplicate_df.empty else False
+
+        if not ok:
+            st.error(f"❌ Invalid name: {msg}")
+        elif duplicate_exists:
+            st.warning(f"⚠️ Already exists: {name}")
+            st.code(name, language="text")
+        else:
+            st.success("✅ Generated")
+            st.code(name, language="text")
+            insert_history(name, selected_type, used, st.session_state.auth["username"])
+
+# =================================
+# Bulk Tab
+# =================================
+with tab_bulk:
+    st.subheader("Bulk Name Generation")
+    uploaded = st.file_uploader("Upload CSV", type=["csv"])
+    if uploaded:
+        df_in = pd.read_csv(uploaded)
+        st.dataframe(df_in, width="stretch")
+        results = []
+        for _, row in df_in.iterrows():
+            token_values_row = {k: str(row.get(k, "")) for k in df_in.columns}
+            name, used = format_with_tokens(TEMPLATES[selected_type], token_values_row)
+            ok, msg = validate_name(name)
+            if ok:
+                insert_history(name, selected_type, used, st.session_state.auth["username"])
+                results.append({"GeneratedName": name, **used})
+            else:
+                results.append({"GeneratedName": f"ERROR: {msg}", **used})
+        out_df = pd.DataFrame(results)
+        st.dataframe(out_df, width="stretch")
+        st.download_button("⬇️ Download CSV", data=out_df.to_csv(index=False), file_name="bulk_results.csv")
+
+# =================================
+# History Tab
+# =================================
+with tab_hist:
+    st.subheader("History & Search")
+    df = fetch_history({})
+    st.dataframe(df, width="stretch", height=420)
+
+# =================================
+# Analytics Tab
+# =================================
+with tab_analytics:
+    st.subheader("Usage Analytics")
+    df_all = fetch_history({})
+    if df_all.empty:
+        st.info("No data yet.")
+    else:
+        st.metric("Total Names", len(df_all))
+        st.bar_chart(df_all["type"].value_counts())
+
+# =================================
+# Admin Tab
+# =================================
+with tab_admin:
+    st.subheader("Template Management")
+    if not IS_ADMIN:
+        st.warning("Admins only")
+    else:
+        temp_df = pd.DataFrame([{"Type": k, "Template": v} for k,v in TEMPLATES.items()])
+        st.dataframe(temp_df, width="stretch")
+        new_type = st.text_input("New Type")
+        new_template = st.text_input("New Template")
+        if st.button("Save Template"):
+            if new_type and new_template:
+                TEMPLATES[new_type] = new_template
+                save_templates(TEMPLATES)
+                rerun()
