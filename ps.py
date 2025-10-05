@@ -8,7 +8,7 @@ from datetime import datetime
 from io import BytesIO
 
 # =================================
-# App Config & Branding
+# App Config
 # =================================
 st.set_page_config(page_title="Enterprise Naming Console", page_icon="🏢", layout="wide")
 
@@ -17,10 +17,11 @@ st.title(APP_TITLE)
 st.caption("Standardize names for SPs, Jobs, Pipelines, Tables, Views — with policies, tokens, history, analytics, and bulk tools.")
 
 # =================================
-# Constants & Defaults
+# Constants
 # =================================
 TEMPLATES_FILE = "templates.json"
 DB_FILE = "names_history.db"
+MAX_LENGTH = 128
 
 DEFAULT_TEMPLATES = {
     "Stored Procedure": "usp_Merge_ITF_{SYSTEM}_{CLIENT}_{PROCESS}",
@@ -33,7 +34,12 @@ DEFAULT_TEMPLATES = {
 }
 
 ENV_OPTIONS = ["DEV", "TEST", "UAT", "STAGE", "PROD"]
-MAX_LENGTH = 128
+
+# Reserved SQL keywords
+RESERVED_WORDS = {
+    "SELECT","TABLE","VIEW","INDEX","INSERT","UPDATE",
+    "DELETE","CREATE","DROP","ALTER","PROCEDURE","FUNCTION"
+}
 
 # =================================
 # Auth
@@ -51,7 +57,6 @@ def login():
             st.session_state.auth = {"logged_in": False, "username": None, "role": None}
 
         if not st.session_state.auth["logged_in"]:
-            # Two options: Login as user OR admin
             if st.button("👤 Login as User"):
                 st.session_state.auth = {"logged_in": True, "username": "user", "role": "user"}
                 st.success("Welcome, User!")
@@ -74,7 +79,6 @@ def login():
             if st.button("Sign out"):
                 st.session_state.auth = {"logged_in": False, "username": None, "role": None}
                 rerun()
-
 
 login()
 if not st.session_state.auth["logged_in"]:
@@ -109,15 +113,8 @@ def ensure_db():
             process TEXT,
             action TEXT,
             env TEXT,
-            extra TEXT,
             user TEXT,
             created_at TEXT
-        )
-    """)
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS sequences (
-            key TEXT PRIMARY KEY,
-            value INTEGER NOT NULL
         )
     """)
     conn.commit()
@@ -140,7 +137,7 @@ def bump_sequence(key: str) -> int:
 
 def sanitize_token_value(v: str) -> str:
     v = (v or "").strip()
-    v = re.sub(r"[^A-Za-z0-9]+", " ", v)   # replace non-alphanum with space
+    v = re.sub(r"[^A-Za-z0-9]+", " ", v)
     parts = v.split()
     pascal = "".join(word.capitalize() for word in parts)
     return pascal[:MAX_LENGTH]
@@ -148,13 +145,13 @@ def sanitize_token_value(v: str) -> str:
 def validate_name(name: str) -> tuple[bool, str]:
     if len(name) > MAX_LENGTH:
         return False, f"Name exceeds max length {MAX_LENGTH}"
+    if name.upper() in RESERVED_WORDS:
+        return False, f"Name '{name}' is a reserved SQL keyword"
     return True, ""
 
 def format_with_tokens(template: str, token_values: dict, seq_scope: str = "GLOBAL") -> tuple[str, dict]:
     used = {}
     name = template
-
-    # Auto tokens
     today = datetime.now().strftime("%Y%m%d")
     if "{DATE}" in name:
         used["DATE"] = today
@@ -164,19 +161,16 @@ def format_with_tokens(template: str, token_values: dict, seq_scope: str = "GLOB
         next_seq = bump_sequence(key)
         used["SEQ"] = str(next_seq)
         name = name.replace("{SEQ}", str(next_seq))
-
     if "{ENV}" in name:
         val = sanitize_token_value(token_values.get("ENV", "DEV"))
         used["ENV"] = val
         name = name.replace("{ENV}", val)
-
     tokens = set(re.findall(r"\{([A-Z0-9_]+)\}", template))
     for t in tokens:
         if t in {"DATE", "SEQ", "ENV"}: continue
         val = sanitize_token_value(token_values.get(t, ""))
         used[t] = val
         name = name.replace("{%s}" % t, val)
-
     return name, used
 
 def insert_history(name: str, ntype: str, used: dict, username: str):
@@ -184,8 +178,8 @@ def insert_history(name: str, ntype: str, used: dict, username: str):
     c = conn.cursor()
     c.execute(
         """
-        INSERT INTO history(name, type, system, client, process, action, env, extra, user, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO history(name, type, system, client, process, action, env, user, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             name,
@@ -195,7 +189,6 @@ def insert_history(name: str, ntype: str, used: dict, username: str):
             used.get("PROCESS"),
             used.get("ACTION"),
             used.get("ENV"),
-            json.dumps({k:v for k,v in used.items() if k not in {"SYSTEM","CLIENT","PROCESS","ACTION","ENV"}}),
             username,
             datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         )
@@ -203,10 +196,9 @@ def insert_history(name: str, ntype: str, used: dict, username: str):
     conn.commit()
     conn.close()
 
-def fetch_history(filters: dict | None = None) -> pd.DataFrame:
+def fetch_history() -> pd.DataFrame:
     conn = sqlite3.connect(DB_FILE)
-    q = "SELECT id, name, type, system, client, process, action, env, user, created_at FROM history ORDER BY id DESC"
-    df = pd.read_sql_query(q, conn)
+    df = pd.read_sql_query("SELECT * FROM history ORDER BY id DESC", conn)
     conn.close()
     return df
 
@@ -215,6 +207,8 @@ def fetch_history(filters: dict | None = None) -> pd.DataFrame:
 # =================================
 ensure_db()
 TEMPLATES = load_templates()
+if "favorites" not in st.session_state:
+    st.session_state["favorites"] = []
 
 # =================================
 # Sidebar
@@ -228,11 +222,12 @@ with st.sidebar:
 # =================================
 # Tabs
 # =================================
-tab_gen, tab_bulk, tab_hist, tab_admin = st.tabs([
+tab_gen, tab_bulk, tab_hist, tab_admin, tab_fav = st.tabs([
     "🔑 Generate",
     "📦 Bulk",
     "📜 History",
-    "🛠️ Admin"
+    "🛠️ Admin",
+    "⭐ Favorites"
 ])
 
 # =================================
@@ -260,6 +255,16 @@ with tab_gen:
         else:
             st.success("✅ Generated")
             st.code(name, language="text")
+
+            # Copy to clipboard
+            st.download_button("📋 Copy to Clipboard", name, file_name="name.txt")
+
+            # Add to favorites
+            if st.button("⭐ Add to Favorites"):
+                if name not in st.session_state["favorites"]:
+                    st.session_state["favorites"].append(name)
+                    st.success("Added to Favorites")
+
             insert_history(name, selected_type, used, st.session_state.auth["username"])
 
 # =================================
@@ -279,24 +284,24 @@ with tab_bulk:
             insert_history(name, selected_type, used, st.session_state.auth["username"])
         out_df = pd.DataFrame(results)
         st.dataframe(out_df, width="stretch")
+        st.download_button("⬇️ Download CSV", data=out_df.to_csv(index=False), file_name="bulk_results.csv")
 
 # =================================
 # History Tab
 # =================================
 with tab_hist:
-    st.subheader("History & Search")
-    df = fetch_history({})
+    st.subheader("History")
+    df = fetch_history()
     st.dataframe(df, width="stretch", height=420)
 
 # =================================
-# Admin Tab with Edit Support
+# Admin Tab
 # =================================
 with tab_admin:
     st.subheader("Template Management")
     if not IS_ADMIN:
         st.warning("Admins only")
     else:
-        st.markdown("**Current Templates (editable)**")
         updated_templates = {}
         for t_type, t_string in TEMPLATES.items():
             col1, col2, col3, col4 = st.columns([2,4,1,1])
@@ -328,3 +333,15 @@ with tab_admin:
                 save_templates(TEMPLATES)
                 st.success(f"Added: {new_type}")
                 rerun()
+
+# =================================
+# Favorites Tab
+# =================================
+with tab_fav:
+    st.subheader("⭐ Favorite Names")
+    favs = st.session_state["favorites"]
+    if favs:
+        st.dataframe(pd.DataFrame(favs, columns=["Favorite Names"]), width="stretch")
+        st.download_button("⬇️ Download Favorites", "\n".join(favs), file_name="favorites.txt")
+    else:
+        st.info("No favorites yet. Add some from the Generate tab!")
