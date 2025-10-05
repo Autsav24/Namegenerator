@@ -158,9 +158,12 @@ def get_sequence(key: str) -> int:
 
 def sanitize_token_value(v: str) -> str:
     v = (v or "").strip().upper()
-    v = re.sub(r"\s+", "_", v)
-    v = re.sub(r"[^A-Z0-9_]", "", v)
+    v = re.sub(r"\s+", "_", v)          # spaces → underscore
+    v = re.sub(r"[^A-Z0-9_]", "_", v)   # any special char → underscore ✅
+    v = re.sub(r"_+", "_", v)           # collapse multiple underscores
+    v = v.strip("_")                    # trim leading/trailing underscores
     return v[:MAX_LENGTH]
+
 
 def validate_name(name: str) -> tuple[bool, str]:
     if len(name) > MAX_LENGTH:
