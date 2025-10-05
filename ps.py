@@ -5,7 +5,6 @@ import json
 import re
 import sqlite3
 from datetime import datetime
-from io import BytesIO
 
 # =================================
 # App Config
@@ -35,7 +34,6 @@ DEFAULT_TEMPLATES = {
 
 ENV_OPTIONS = ["DEV", "TEST", "UAT", "STAGE", "PROD"]
 
-# Reserved SQL keywords
 RESERVED_WORDS = {
     "SELECT","TABLE","VIEW","INDEX","INSERT","UPDATE",
     "DELETE","CREATE","DROP","ALTER","PROCEDURE","FUNCTION"
@@ -211,6 +209,23 @@ if "favorites" not in st.session_state:
     st.session_state["favorites"] = []
 
 # =================================
+# Clipboard Helper
+# =================================
+def copy_to_clipboard(text):
+    st.components.v1.html(
+        f"""
+        <script>
+        function copyText() {{
+            navigator.clipboard.writeText("{text}");
+            alert("Copied to clipboard: {text}");
+        }}
+        </script>
+        <button onclick="copyText()">📋 Copy to Clipboard</button>
+        """,
+        height=50,
+    )
+
+# =================================
 # Sidebar
 # =================================
 with st.sidebar:
@@ -255,11 +270,8 @@ with tab_gen:
         else:
             st.success("✅ Generated")
             st.code(name, language="text")
+            copy_to_clipboard(name)
 
-            # Copy to clipboard
-            st.download_button("📋 Copy to Clipboard", name, file_name="name.txt")
-
-            # Add to favorites
             if st.button("⭐ Add to Favorites"):
                 if name not in st.session_state["favorites"]:
                     st.session_state["favorites"].append(name)
